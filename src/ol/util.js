@@ -38,3 +38,16 @@ export function getUid(obj) {
  * @type {string}
  */
 export const VERSION = 'latest';
+
+/**
+ * Replace the last element of the array with the specified one.
+ * @param {Array} array Array to replace.
+ * @param {any} itemToReplace Item to replace.
+ * @return {Array} Array with the replaced item.
+ */
+export function replaceLastArrayEntry(array, itemToReplace) {
+  const replacedArray = array.slice();
+  replacedArray.pop();
+  replacedArray.push(itemToReplace);
+  return replacedArray;
+}

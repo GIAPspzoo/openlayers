@@ -29,6 +29,13 @@ import {
 } from '../extent.js';
 import {createEditingStyle} from '../style/Style.js';
 import {fromUserCoordinate, getUserProjection} from '../proj.js';
+import {
+  getPerpendicularCoordinates,
+  getPrependicularDestination,
+  transformCoordForGeolib,
+  transformCoordFromGeolib,
+} from '../perpendicularCalculations.js';
+import {replaceLastArrayEntry} from '../util.js';
 import {squaredDistance as squaredCoordinateDistance} from '../coordinate.js';
 
 /**
@@ -125,6 +132,8 @@ const Mode = {
   POLYGON: 'Polygon',
   CIRCLE: 'Circle',
 };
+
+const PERPENDICULAR_KEY = 'z';
 
 /**
  * @enum {string}
@@ -335,6 +344,13 @@ class Draw extends PointerInteraction {
       ? options.finishCondition
       : TRUE;
 
+    /**
+     * Determines whether the perpendicular key is pressed.
+     * @type {boolean}
+     * @private
+     */
+    this.isPerpendicularKeyPressed_ = false;
+
     let geometryFunction = options.geometryFunction;
     if (!geometryFunction) {
       const mode = this.mode_;
@@ -506,6 +522,61 @@ class Draw extends PointerInteraction {
     }
 
     this.addChangeListener(InteractionProperty.ACTIVE, this.updateState_);
+    this.addPerpendicularKeyListeners_();
+  }
+
+  /**
+   * Refresh the sketch point if the perpendicular key has been pressed.
+   * @private
+   */
+  refreshSketchPointOnPerpendicularKeyPress_() {
+    const featureGeometry = this.sketchFeature_.getGeometry();
+    const featureCoords = featureGeometry.getCoordinates();
+
+    if (featureCoords.length !== 2) {
+      return;
+    }
+
+    const perpendicularCoords = getPerpendicularCoordinates(
+      featureCoords[0],
+      featureCoords[1]
+    );
+    featureGeometry.setCoordinates(perpendicularCoords);
+
+    const lastPerpendicularCoord = perpendicularCoords[1].slice();
+    this.createOrUpdateSketchPoint_(lastPerpendicularCoord);
+  }
+
+  handlePerpendicularKeyDown_({key}) {
+    if (key !== PERPENDICULAR_KEY) {
+      return;
+    }
+
+    this.isPerpendicularKeyPressed_ = true;
+
+    if (!this.sketchFeature_) {
+      return;
+    }
+
+    this.refreshSketchPointOnPerpendicularKeyPress_();
+  }
+
+  handlePerpendicularKeyUp_({key}) {
+    if (key === PERPENDICULAR_KEY) {
+      this.isPerpendicularKeyPressed_ = false;
+    }
+  }
+
+  /**
+   * Add the perpendicular key listeners.
+   * @private
+   */
+  addPerpendicularKeyListeners_() {
+    window.addEventListener(
+      'keydown',
+      this.handlePerpendicularKeyDown_.bind(this)
+    );
+    window.addEventListener('keyup', this.handlePerpendicularKeyUp_.bind(this));
   }
 
   /**
@@ -681,6 +752,52 @@ class Draw extends PointerInteraction {
   }
 
   /**
+   * Draw a perpendicular sketch on the map.
+   * @param {import("../coordinate").Coordinate} eventCoordinate Event coordinate
+   * @return {import("../coordinate").Coordinate} Computed coordinate
+   * @private
+   */
+  drawPerpendicularSketch_(eventCoordinate) {
+    let coordinate = eventCoordinate;
+
+    const featureGeometry = this.sketchFeature_.getGeometry();
+    const featureCoords = featureGeometry.getCoordinates();
+
+    if (featureCoords.length === 2) {
+      const perpendicularCoords = getPerpendicularCoordinates(
+        featureCoords[0],
+        eventCoordinate
+      );
+      featureGeometry.setCoordinates(perpendicularCoords);
+      coordinate = perpendicularCoords[1];
+    }
+
+    if (featureCoords.length > 2) {
+      const perependicularDestination = getPrependicularDestination({
+        lastPoint: transformCoordForGeolib(
+          featureCoords[featureCoords.length - 2]
+        ),
+        penultimatePoint: transformCoordForGeolib(
+          featureCoords[featureCoords.length - 3]
+        ),
+        currentPoint: transformCoordForGeolib(eventCoordinate),
+      });
+
+      const transformedPerependicularDestination = transformCoordFromGeolib(
+        perependicularDestination
+      );
+      const newFeatureCoords = replaceLastArrayEntry(
+        featureCoords,
+        transformedPerependicularDestination
+      );
+      featureGeometry.setCoordinates(newFeatureCoords);
+      coordinate = transformedPerependicularDestination;
+    }
+
+    return coordinate;
+  }
+
+  /**
    * Handle move events.
    * @param {import("../MapBrowserEvent.js").default} event A move event.
    * @private
@@ -706,7 +823,13 @@ class Draw extends PointerInteraction {
     }
 
     if (this.finishCoordinate_) {
-      this.modifyDrawing_(event.coordinate);
+      let coordinate = event.coordinate;
+
+      if (this.isPerpendicularKeyPressed_) {
+        coordinate = this.drawPerpendicularSketch_(coordinate);
+      }
+
+      this.modifyDrawing_(coordinate);
     } else {
       this.createOrUpdateSketchPoint_(event.coordinate.slice());
     }

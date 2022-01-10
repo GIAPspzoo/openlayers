@@ -1230,6 +1230,13 @@ class Draw extends PointerInteraction {
     }
     this.createOrUpdateSketchPoint_(coordinate.slice());
     this.updateSketchFeatures_();
+
+    // Refresh the sketch if drawing a perpendicular geometry.
+    if (this.isPerpendicularKeyPressed_) {
+      const perpendicularCoordinate = this.drawPerpendicularSketch_(coordinate);
+      this.modifyDrawing_(perpendicularCoordinate);
+    }
+
     if (done) {
       this.finishDrawing();
     }

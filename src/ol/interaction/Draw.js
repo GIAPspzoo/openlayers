@@ -544,7 +544,6 @@ class Draw extends PointerInteraction {
     }
 
     this.addChangeListener(InteractionProperty.ACTIVE, this.updateState_);
-    this.addPerpendicularKeyListeners_();
   }
 
   /**
@@ -645,8 +644,19 @@ class Draw extends PointerInteraction {
     this.handlePerpendicularKeyUpListener_ =
       this.handlePerpendicularKeyUp_.bind(this);
     window.addEventListener('keyup', this.handlePerpendicularKeyUpListener_);
+  }
 
-    // TODO: Handle remove listeners on the interaction unmount.
+  /**
+   * Remove the perpendicular key listeners.
+   * @private
+   */
+  removePerpendicularKeyListeners_() {
+    window.removeEventListener(
+      'keydown',
+      this.handlePerpendicularKeyDownListener_
+    );
+
+    window.removeEventListener('keyup', this.handlePerpendicularKeyUpListener_);
   }
 
   /**
@@ -1450,6 +1460,9 @@ class Draw extends PointerInteraction {
     const active = this.getActive();
     if (!map || !active) {
       this.abortDrawing();
+      this.removePerpendicularKeyListeners_();
+    } else {
+      this.addPerpendicularKeyListeners_();
     }
     this.overlay_.setMap(active ? map : null);
   }

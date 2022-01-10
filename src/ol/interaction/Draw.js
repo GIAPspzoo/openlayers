@@ -352,6 +352,14 @@ class Draw extends PointerInteraction {
     this.isPerpendicularKeyPressed_ = false;
 
     /**
+     * Stores the coordinates of the last clicked place on the map.
+     * The value is cleared 1.5s after set.
+     * @type {import("../coordinate.js").Coordinate|null}
+     * @private
+     */
+    this.lastClickedCoordinates_ = null;
+
+    /**
      * Bound up the perpendicular key down handler with the "this" object.
      * @type {(this: Window, ev: KeyboardEvent) => any}
      * @private
@@ -793,7 +801,13 @@ class Draw extends PointerInteraction {
           !this.freehand_ &&
           (!startingToDraw || this.mode_ === Mode.POINT)
         ) {
-          if (this.atFinish_(event.pixel)) {
+          // When the user draws a polygon or line and click twice in the same
+          // place, finish drawing.
+          const finishPolygonDrawing =
+            event.coordinate.toString() ===
+            this.lastClickedCoordinates_?.toString();
+
+          if (this.atFinish_(event.pixel) || finishPolygonDrawing) {
             if (this.finishCondition_(event)) {
               this.finishDrawing();
             }
@@ -810,7 +824,21 @@ class Draw extends PointerInteraction {
     if (!pass && this.stopClick_) {
       event.preventDefault();
     }
+
+    this.lastClickedCoordinates_ = event.coordinate.slice();
+    // When the user clicks the same place after 1.5s, do not finish
+    // the geometry, but continue the sketch.
+    setTimeout(this.clearLastClickedCoordinates_.bind(this), 1500);
+
     return pass;
+  }
+
+  /**
+   * Clear the lastClickedCoordinates_ property value.
+   * @private
+   */
+  clearLastClickedCoordinates_() {
+    this.lastClickedCoordinates_ = null;
   }
 
   /**
@@ -928,6 +956,24 @@ class Draw extends PointerInteraction {
   }
 
   /**
+   * In the perpendicular line drawing mode we have to set the last anchored
+   * coordinate of the sketch as the value of the "this.finishCoordinate_"
+   * property (the penultimate one in geometry). Otherwise, the perpendicular
+   * line drawing will end when user click on the place where the cursor was
+   * when adding the last part of geometry.
+   * @private
+   */
+  setFinishCoordinateForLineSketch_() {
+    if (this.isPerpendicularKeyPressed_) {
+      const lastCoordinate = /** @type {import("../coordinate").Coordinate} */ (
+        this.sketchCoords_[this.sketchCoords_.length - 2]
+      );
+
+      this.finishCoordinate_ = lastCoordinate.slice();
+    }
+  }
+
+  /**
    * Handle move events.
    * @param {import("../MapBrowserEvent.js").default} event A move event.
    * @private
@@ -954,6 +1000,10 @@ class Draw extends PointerInteraction {
 
     if (this.finishCoordinate_) {
       let coordinate = event.coordinate;
+
+      if (this.mode_ === Mode.LINE_STRING) {
+        this.setFinishCoordinateForLineSketch_();
+      }
 
       if (this.isPerpendicularKeyPressed_) {
         coordinate = this.drawPerpendicularSketch_(coordinate);

@@ -373,6 +373,13 @@ class Draw extends PointerInteraction {
      */
     this.handlePerpendicularKeyUpListener_ = null;
 
+    /**
+     * The last cursor coordinates hovered on the map.
+     * @type {import("../coordinate").Coordinate|null}
+     * @private
+     */
+    this.pointerCoordinate_ = null;
+
     let geometryFunction = options.geometryFunction;
     if (!geometryFunction) {
       const mode = this.mode_;
@@ -547,56 +554,42 @@ class Draw extends PointerInteraction {
   }
 
   /**
-   * Check if should refresh the sketch point geometry on the perpendicular key press.
-   * @return {boolean} If should refresh the sketch point geometry.
+   * Refresh the sketch if the perpendicular key has been pressed.
    * @private
    */
-  shouldRefreshSketchPointOnPerpendicularKeyPress_() {
+  refreshSketchOnPerpendicularKeyPress_() {
     const featureGeometry = this.sketchFeature_.getGeometry();
     const featureCoords = featureGeometry.getCoordinates();
 
-    if (this.type_ === Mode.LINE_STRING) {
-      return featureCoords.length === 2;
-    }
-    if (this.type_ === Mode.POLYGON) {
-      return featureCoords?.[0]?.length === 3;
-    }
-    return false;
-  }
-
-  /**
-   * Refresh the sketch point if the perpendicular key has been pressed.
-   * @private
-   */
-  refreshSketchPointOnPerpendicularKeyPress_() {
-    if (!this.shouldRefreshSketchPointOnPerpendicularKeyPress_()) {
-      return;
-    }
-
-    const featureGeometry = this.sketchFeature_.getGeometry();
-    const featureCoords = featureGeometry.getCoordinates();
-    let perpendicularCoords;
+    let pointerCoordinate;
 
     if (this.type_ === Mode.LINE_STRING) {
-      perpendicularCoords = getPerpendicularCoordinates(
-        featureCoords[0],
-        featureCoords[1]
-      );
-      featureGeometry.setCoordinates(perpendicularCoords);
+      if (featureCoords.length === 2) {
+        pointerCoordinate = featureCoords[1];
+      }
+      if (featureCoords.length > 2) {
+        pointerCoordinate = this.sketchCoords_[this.sketchCoords_.length - 1];
+      }
     }
 
     if (this.type_ === Mode.POLYGON) {
-      perpendicularCoords = getPerpendicularCoordinates(
-        featureCoords[0][0],
-        featureCoords[0][1]
-      );
-
-      const lineGeometry = this.sketchLine_.getGeometry();
-      lineGeometry.setCoordinates(perpendicularCoords);
+      const currentFeatureCoords = featureCoords[featureCoords.length - 1];
+      if (currentFeatureCoords.length === 3) {
+        pointerCoordinate = currentFeatureCoords[1];
+      }
+      if (currentFeatureCoords.length > 3) {
+        pointerCoordinate =
+          currentFeatureCoords[currentFeatureCoords.length - 2];
+      }
     }
 
-    const lastPerpendicularCoord = perpendicularCoords[1].slice();
-    this.createOrUpdateSketchPoint_(lastPerpendicularCoord);
+    const perpendicularCoords =
+      this.drawPerpendicularSketch_(pointerCoordinate);
+
+    if (perpendicularCoords) {
+      const lastPerpendicularCoord = perpendicularCoords.slice();
+      this.createOrUpdateSketchPoint_(lastPerpendicularCoord);
+    }
   }
 
   /**
@@ -615,7 +608,7 @@ class Draw extends PointerInteraction {
       return;
     }
 
-    this.refreshSketchPointOnPerpendicularKeyPress_();
+    this.refreshSketchOnPerpendicularKeyPress_();
   }
 
   /**
@@ -626,6 +619,10 @@ class Draw extends PointerInteraction {
   handlePerpendicularKeyUp_({key}) {
     if (key === PERPENDICULAR_KEY) {
       this.isPerpendicularKeyPressed_ = false;
+
+      if (this.sketchFeature_) {
+        this.modifyDrawing_(this.pointerCoordinate_);
+      }
     }
   }
 
@@ -855,8 +852,9 @@ class Draw extends PointerInteraction {
    * Draw a perpendicular sketch for a LineString geometry.
    * @param {import("../coordinate").Coordinate} eventCoordinate Event's coordinate.
    * @return {import("../coordinate").Coordinate} Calculated coordinates.
+   * @private
    */
-  drawPerpendicularLineStringSketch(eventCoordinate) {
+  drawPerpendicularLineStringSketch_(eventCoordinate) {
     let coordinate = eventCoordinate;
 
     const featureGeometry = this.sketchFeature_.getGeometry();
@@ -898,11 +896,12 @@ class Draw extends PointerInteraction {
 
   /**
    * Draw a perpendicular sketch for a Polygon geometry.
-   * @param {import("../coordinate").Coordinate} eventCoordinate Event's coordinate.
+   * @param {import("../coordinate").Coordinate} pointerCoordinate Pointer coordinate.
    * @return {import("../coordinate").Coordinate} Calculated coordinates.
+   * @private
    */
-  drawPerpendicularPolygonSketch(eventCoordinate) {
-    let coordinate = eventCoordinate;
+  drawPerpendicularPolygonSketch_(pointerCoordinate) {
+    let coordinate = pointerCoordinate;
 
     const featureGeometry = this.sketchFeature_.getGeometry();
     const featureCoords = featureGeometry.getCoordinates();
@@ -912,7 +911,7 @@ class Draw extends PointerInteraction {
       const lineCoords = lineGeometry.getCoordinates();
       const perpendicularCoords = getPerpendicularCoordinates(
         lineCoords[0],
-        eventCoordinate
+        pointerCoordinate
       );
       lineGeometry.setCoordinates(perpendicularCoords);
 
@@ -927,7 +926,7 @@ class Draw extends PointerInteraction {
         penultimatePoint: transformCoordForGeolib(
           featureCoords[0][featureCoords[0].length - 4]
         ),
-        currentPoint: transformCoordForGeolib(eventCoordinate),
+        currentPoint: transformCoordForGeolib(pointerCoordinate),
       });
 
       const transformedPerependicularDestination = transformCoordFromGeolib(
@@ -939,6 +938,7 @@ class Draw extends PointerInteraction {
       );
 
       featureGeometry.setCoordinates([newFeatureCoords]);
+      this.modifyDrawing_(transformedPerependicularDestination);
       coordinate = transformedPerependicularDestination;
     }
 
@@ -947,19 +947,19 @@ class Draw extends PointerInteraction {
 
   /**
    * Draw a perpendicular sketch on the map.
-   * @param {import("../coordinate").Coordinate} eventCoordinate Event coordinate
+   * @param {import("../coordinate").Coordinate} pointerCoordinate Pointer coordinate
    * @return {import("../coordinate").Coordinate} Computed coordinate
    * @private
    */
-  drawPerpendicularSketch_(eventCoordinate) {
-    let coordinate = eventCoordinate;
+  drawPerpendicularSketch_(pointerCoordinate) {
+    let coordinate = pointerCoordinate;
 
     if (this.type_ === Mode.LINE_STRING) {
-      coordinate = this.drawPerpendicularLineStringSketch(eventCoordinate);
+      coordinate = this.drawPerpendicularLineStringSketch_(pointerCoordinate);
     }
 
     if (this.type_ === Mode.POLYGON) {
-      coordinate = this.drawPerpendicularPolygonSketch(eventCoordinate);
+      coordinate = this.drawPerpendicularPolygonSketch_(pointerCoordinate);
     }
 
     return coordinate;
@@ -989,6 +989,8 @@ class Draw extends PointerInteraction {
    * @private
    */
   handlePointerMove_(event) {
+    this.pointerCoordinate_ = event.coordinate.slice();
+
     this.pointerType_ = event.originalEvent.pointerType;
     if (
       this.downPx_ &&

@@ -1,6 +1,6 @@
 {
-  "name": "ol",
-  "version": "6.10.1-dev",
+  "name": "@giapspzoo/ol",
+  "version": "6.10.1a",
   "description": "OpenLayers mapping library",
   "keywords": [
     "map",

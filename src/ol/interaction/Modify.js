@@ -376,6 +376,13 @@ class Modify extends PointerInteraction {
     this.pointerCoordinate_ = null;
 
     /**
+     * Determines if the perpendicular key events are attached to the DOM.
+     * @type {boolean}
+     * @private
+     */
+    this.hasPerpendicularKeyEventsAttached_ = false;
+
+    /**
      * @const
      * @private
      * @type {!Object<string, function(Feature, import("../geom/Geometry.js").default): void>}
@@ -462,6 +469,8 @@ class Modify extends PointerInteraction {
       options.snapToPointer === undefined
         ? !this.hitDetection_
         : options.snapToPointer;
+
+    this.addPerpendicularKeyListeners_();
   }
 
   /**
@@ -511,6 +520,10 @@ class Modify extends PointerInteraction {
    * @private
    */
   addPerpendicularKeyListeners_() {
+    if (this.hasPerpendicularKeyEventsAttached_) {
+      return;
+    }
+
     this.handlePerpendicularKeyDownListener_ =
       this.handlePerpendicularKeyDown_.bind(this);
     window.addEventListener(
@@ -521,6 +534,8 @@ class Modify extends PointerInteraction {
     this.handlePerpendicularKeyUpListener_ =
       this.handlePerpendicularKeyUp_.bind(this);
     window.addEventListener('keyup', this.handlePerpendicularKeyUpListener_);
+
+    this.hasPerpendicularKeyEventsAttached_ = true;
   }
 
   /**
@@ -534,6 +549,8 @@ class Modify extends PointerInteraction {
     );
 
     window.removeEventListener('keyup', this.handlePerpendicularKeyUpListener_);
+
+    this.hasPerpendicularKeyEventsAttached_ = false;
   }
 
   /**

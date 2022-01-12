@@ -35,7 +35,7 @@ import {
   transformCoordForGeolib,
   transformCoordFromGeolib,
 } from '../perpendicularCalculations.js';
-import {replaceLastArrayEntry} from '../util.js';
+import {PERPENDICULAR_KEY, replaceLastArrayEntry} from '../util.js';
 import {squaredDistance as squaredCoordinateDistance} from '../coordinate.js';
 
 /**
@@ -132,8 +132,6 @@ const Mode = {
   POLYGON: 'Polygon',
   CIRCLE: 'Circle',
 };
-
-const PERPENDICULAR_KEY = 'z';
 
 /**
  * @enum {string}

@@ -51,3 +51,8 @@ export function replaceLastArrayEntry(array, itemToReplace) {
   replacedArray.push(itemToReplace);
   return replacedArray;
 }
+
+/**
+ * The key that activates the mode of drawing/modifying perpendicular geometry. 
+ */
+export const PERPENDICULAR_KEY = 'z';

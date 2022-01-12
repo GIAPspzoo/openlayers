@@ -14,6 +14,7 @@ import RBush from '../structs/RBush.js';
 import VectorEventType from '../source/VectorEventType.js';
 import VectorLayer from '../layer/Vector.js';
 import VectorSource from '../source/Vector.js';
+import {PERPENDICULAR_KEY, getUid} from '../util.js';
 import {
   altKeyOnly,
   always,
@@ -42,7 +43,11 @@ import {
   toUserCoordinate,
   toUserExtent,
 } from '../proj.js';
-import {getUid} from '../util.js';
+import {
+  getPrependicularDestination,
+  transformCoordForGeolib,
+  transformCoordFromGeolib,
+} from '../perpendicularCalculations.js';
 
 /**
  * The segment index assigned to a circle's center when
@@ -335,6 +340,34 @@ class Modify extends PointerInteraction {
     });
 
     /**
+     * Determines whether the perpendicular key is pressed.
+     * @type {boolean}
+     * @private
+     */
+    this.isPerpendicularKeyPressed_ = false;
+
+    /**
+     * Bound up the perpendicular key down handler with the "this" object.
+     * @type {(this: Window, ev: KeyboardEvent) => any}
+     * @private
+     */
+    this.handlePerpendicularKeyDownListener_ = null;
+
+    /**
+     * Bound up the perpendicular key up handler with the "this" object.
+     * @type {(this: Window, ev: KeyboardEvent) => any}
+     * @private
+     */
+    this.handlePerpendicularKeyUpListener_ = null;
+
+    /**
+     * The starting coordinates of the currently dragged vertex.
+     * @type {number|null}
+     * @private
+     */
+    this.draggedCoordinateIndex_ = null;
+
+    /**
      * @const
      * @private
      * @type {!Object<string, function(Feature, import("../geom/Geometry.js").default): void>}
@@ -421,6 +454,58 @@ class Modify extends PointerInteraction {
       options.snapToPointer === undefined
         ? !this.hitDetection_
         : options.snapToPointer;
+  }
+
+  /**
+   * Handle the perpendicular key down.
+   * @param {KeyboardEvent} event Keyboard event
+   * @return {void}
+   */
+  handlePerpendicularKeyDown_({key}) {
+    if (!this.isPerpendicularKeyPressed_ && key === PERPENDICULAR_KEY) {
+      this.isPerpendicularKeyPressed_ = true;
+    }
+  }
+
+  /**
+   * Handle the perpendicular key up.
+   * @param {KeyboardEvent} event Keyboard event
+   * @return {void}
+   */
+  handlePerpendicularKeyUp_({key}) {
+    if (key === PERPENDICULAR_KEY) {
+      this.isPerpendicularKeyPressed_ = false;
+    }
+  }
+
+  /**
+   * Add the perpendicular key listeners.
+   * @private
+   */
+  addPerpendicularKeyListeners_() {
+    this.handlePerpendicularKeyDownListener_ =
+      this.handlePerpendicularKeyDown_.bind(this);
+    window.addEventListener(
+      'keydown',
+      this.handlePerpendicularKeyDownListener_
+    );
+
+    this.handlePerpendicularKeyUpListener_ =
+      this.handlePerpendicularKeyUp_.bind(this);
+    window.addEventListener('keyup', this.handlePerpendicularKeyUpListener_);
+  }
+
+  /**
+   * Remove the perpendicular key listeners.
+   * @private
+   */
+  removePerpendicularKeyListeners_() {
+    window.removeEventListener(
+      'keydown',
+      this.handlePerpendicularKeyDownListener_
+    );
+
+    window.removeEventListener('keyup', this.handlePerpendicularKeyUpListener_);
   }
 
   /**
@@ -580,6 +665,7 @@ class Modify extends PointerInteraction {
    */
   handleFeatureAdd_(evt) {
     this.addFeature_(/** @type {Feature} */ (evt.element));
+    this.addPerpendicularKeyListeners_();
   }
 
   /**
@@ -601,6 +687,7 @@ class Modify extends PointerInteraction {
   handleFeatureRemove_(evt) {
     const feature = /** @type {Feature} */ (evt.element);
     this.removeFeature_(feature);
+    this.removePerpendicularKeyListeners_();
   }
 
   /**
@@ -830,6 +917,7 @@ class Modify extends PointerInteraction {
     }
     vertexFeature.set('features', features);
     vertexFeature.set('geometries', geometries);
+    vertexFeature.set('coordinates', coordinates);
     return vertexFeature;
   }
 
@@ -871,6 +959,60 @@ class Modify extends PointerInteraction {
   }
 
   /**
+   * Calculate perpendicular modification.
+   * @param {import("../coordinate.js").Coordinate} eventCoordinate Event coordinate.
+   * @return {import("../coordinate.js").Coordinate|void} Perpendicular vertex's coordinate.
+   * @private
+   */
+  handlePerpendicularModification_(eventCoordinate) {
+    const featureGeometry = this.dragSegments_[0][0].geometry;
+    const featureGeometryType = featureGeometry.getType();
+    const draggedCoordinateIndex = this.draggedCoordinateIndex_;
+
+    let penultimatePoint;
+    let lastPoint;
+
+    if (featureGeometryType === 'Polygon') {
+      const featureCoords = featureGeometry.getCoordinates()[0];
+
+      if (draggedCoordinateIndex > 1) {
+        penultimatePoint = featureCoords[draggedCoordinateIndex - 2];
+        lastPoint = featureCoords[draggedCoordinateIndex - 1];
+      } else if (draggedCoordinateIndex === 1) {
+        penultimatePoint = featureCoords[featureCoords.length - 2];
+        lastPoint = featureCoords[0];
+      } else if (draggedCoordinateIndex === 0) {
+        penultimatePoint = featureCoords[featureCoords.length - 3];
+        lastPoint = featureCoords[featureCoords.length - 2];
+      }
+    }
+
+    if (featureGeometryType === 'LineString') {
+      const featureCoords = featureGeometry.getCoordinates();
+
+      if (draggedCoordinateIndex > 1) {
+        penultimatePoint = featureCoords[draggedCoordinateIndex - 2];
+        lastPoint = featureCoords[draggedCoordinateIndex - 1];
+      } else if (draggedCoordinateIndex === 1) {
+        penultimatePoint = featureCoords[featureCoords.length - 2];
+        lastPoint = featureCoords[0];
+      }
+    }
+
+    if (penultimatePoint && lastPoint) {
+      const perpendicularCoordinate = getPrependicularDestination({
+        penultimatePoint: transformCoordForGeolib(penultimatePoint),
+        lastPoint: transformCoordForGeolib(lastPoint),
+        currentPoint: transformCoordForGeolib(eventCoordinate),
+      });
+
+      if (perpendicularCoordinate) {
+        return transformCoordFromGeolib(perpendicularCoordinate);
+      }
+    }
+  }
+
+  /**
    * Handle pointer drag events.
    * @param {import("../MapBrowserEvent.js").default} evt Event.
    */
@@ -878,10 +1020,20 @@ class Modify extends PointerInteraction {
     this.ignoreNextSingleClick_ = false;
     this.willModifyFeatures_(evt, this.dragSegments_);
 
-    const vertex = [
+    let vertex = [
       evt.coordinate[0] + this.delta_[0],
       evt.coordinate[1] + this.delta_[1],
     ];
+
+    if (this.isPerpendicularKeyPressed_) {
+      const perpendicularVertexCoordinate =
+        this.handlePerpendicularModification_(evt.coordinate);
+
+      if (perpendicularVertexCoordinate) {
+        vertex = perpendicularVertexCoordinate;
+      }
+    }
+
     const features = [];
     const geometries = [];
     for (let i = 0, ii = this.dragSegments_.length; i < ii; ++i) {
@@ -974,6 +1126,38 @@ class Modify extends PointerInteraction {
       }
     }
     this.createOrUpdateVertexFeature_(vertex, features, geometries);
+  }
+
+  /**
+   * Set the dragged coordinate feature geometry index.
+   * @private
+   */
+  setDraggedCoordinateIndex_() {
+    if (!this.dragSegments_.length) {
+      return;
+    }
+
+    const featureGeometry = this.dragSegments_[0][0].geometry;
+    const featureGeometryType = featureGeometry.getType();
+
+    if (
+      featureGeometryType === 'LineString' ||
+      featureGeometryType === 'Polygon'
+    ) {
+      let featureCoordinates =
+        this.dragSegments_[0][0].geometry.getCoordinates();
+      if (featureGeometryType === 'Polygon') {
+        featureCoordinates = featureCoordinates[0];
+      }
+
+      const draggedCoordinateIndex = featureCoordinates?.findIndex(
+        (coordinate) =>
+          coordinate.toString() ===
+          this.vertexFeature_?.get('coordinates').toString()
+      );
+
+      this.draggedCoordinateIndex_ = draggedCoordinateIndex;
+    }
   }
 
   /**
@@ -1076,6 +1260,9 @@ class Modify extends PointerInteraction {
         this.insertVertex_(insertVertices[j], vertex);
       }
     }
+
+    this.setDraggedCoordinateIndex_();
+
     return !!this.vertexFeature_;
   }
 
@@ -1085,6 +1272,8 @@ class Modify extends PointerInteraction {
    * @return {boolean} If the event was consumed.
    */
   handleUpEvent(evt) {
+    this.draggedCoordinateIndex_ = null;
+
     for (let i = this.dragSegments_.length - 1; i >= 0; --i) {
       const segmentData = this.dragSegments_[i][0];
       const geometry = segmentData.geometry;

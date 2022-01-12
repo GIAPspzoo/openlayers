@@ -7,6 +7,7 @@ import Event from '../events/Event.js';
 import EventType from '../events/EventType.js';
 import Feature from '../Feature.js';
 import GeometryType from '../geom/GeometryType.js';
+import MapBrowserEvent from '../MapBrowserEvent.js';
 import MapBrowserEventType from '../MapBrowserEventType.js';
 import Point from '../geom/Point.js';
 import PointerInteraction from './Pointer.js';
@@ -368,6 +369,13 @@ class Modify extends PointerInteraction {
     this.draggedCoordinateIndex_ = null;
 
     /**
+     * The current coordinates of the pointer
+     * @type {import('../coordinate').Coordinate}
+     * @private
+     */
+    this.pointerCoordinate_ = null;
+
+    /**
      * @const
      * @private
      * @type {!Object<string, function(Feature, import("../geom/Geometry.js").default): void>}
@@ -457,13 +465,32 @@ class Modify extends PointerInteraction {
   }
 
   /**
+   * Refreshes perpendicular modification geometry.
+   * @param {KeyboardEvent} event Event to pass down
+   * @private
+   */
+  refreshPerpendicularModification_(event) {
+    if (this.pointerCoordinate_) {
+      const perpendicularKeyDownEvent = new MapBrowserEvent(
+        EventType.KEYPRESS,
+        this.getMap(),
+        event
+      );
+      perpendicularKeyDownEvent.coordinate = this.pointerCoordinate_;
+
+      this.handleDragEvent(perpendicularKeyDownEvent);
+    }
+  }
+
+  /**
    * Handle the perpendicular key down.
    * @param {KeyboardEvent} event Keyboard event
    * @return {void}
    */
-  handlePerpendicularKeyDown_({key}) {
-    if (!this.isPerpendicularKeyPressed_ && key === PERPENDICULAR_KEY) {
+  handlePerpendicularKeyDown_(event) {
+    if (event.key === PERPENDICULAR_KEY) {
       this.isPerpendicularKeyPressed_ = true;
+      this.refreshPerpendicularModification_(event);
     }
   }
 
@@ -472,9 +499,10 @@ class Modify extends PointerInteraction {
    * @param {KeyboardEvent} event Keyboard event
    * @return {void}
    */
-  handlePerpendicularKeyUp_({key}) {
-    if (key === PERPENDICULAR_KEY) {
+  handlePerpendicularKeyUp_(event) {
+    if (event.key === PERPENDICULAR_KEY) {
       this.isPerpendicularKeyPressed_ = false;
+      this.refreshPerpendicularModification_(event);
     }
   }
 
@@ -965,6 +993,10 @@ class Modify extends PointerInteraction {
    * @private
    */
   handlePerpendicularModification_(eventCoordinate) {
+    if (!this.dragSegments_?.length) {
+      return;
+    }
+
     const featureGeometry = this.dragSegments_[0][0].geometry;
     const featureGeometryType = featureGeometry.getType();
     const draggedCoordinateIndex = this.draggedCoordinateIndex_;
@@ -972,7 +1004,7 @@ class Modify extends PointerInteraction {
     let penultimatePoint;
     let lastPoint;
 
-    if (featureGeometryType === 'Polygon') {
+    if (featureGeometryType === GeometryType.POLYGON) {
       const featureCoords = featureGeometry.getCoordinates()[0];
 
       if (draggedCoordinateIndex > 1) {
@@ -987,7 +1019,7 @@ class Modify extends PointerInteraction {
       }
     }
 
-    if (featureGeometryType === 'LineString') {
+    if (featureGeometryType === GeometryType.LINE_STRING) {
       const featureCoords = featureGeometry.getCoordinates();
 
       if (draggedCoordinateIndex > 1) {
@@ -1017,6 +1049,8 @@ class Modify extends PointerInteraction {
    * @param {import("../MapBrowserEvent.js").default} evt Event.
    */
   handleDragEvent(evt) {
+    this.pointerCoordinate_ = evt.coordinate.slice();
+
     this.ignoreNextSingleClick_ = false;
     this.willModifyFeatures_(evt, this.dragSegments_);
 
@@ -1141,12 +1175,12 @@ class Modify extends PointerInteraction {
     const featureGeometryType = featureGeometry.getType();
 
     if (
-      featureGeometryType === 'LineString' ||
-      featureGeometryType === 'Polygon'
+      featureGeometryType === GeometryType.LINE_STRING ||
+      featureGeometryType === GeometryType.POLYGON
     ) {
       let featureCoordinates =
         this.dragSegments_[0][0].geometry.getCoordinates();
-      if (featureGeometryType === 'Polygon') {
+      if (featureGeometryType === GeometryType.POLYGON) {
         featureCoordinates = featureCoordinates[0];
       }
 
@@ -1169,6 +1203,9 @@ class Modify extends PointerInteraction {
     if (!this.condition_(evt)) {
       return false;
     }
+
+    this.pointerCoordinate_ = evt.coordinate.slice();
+
     const pixelCoordinate = evt.coordinate;
     this.handlePointerAtPixel_(evt.pixel, evt.map, pixelCoordinate);
     this.dragSegments_.length = 0;
@@ -1272,6 +1309,7 @@ class Modify extends PointerInteraction {
    * @return {boolean} If the event was consumed.
    */
   handleUpEvent(evt) {
+    this.pointerCoordinate_ = null;
     this.draggedCoordinateIndex_ = null;
 
     for (let i = this.dragSegments_.length - 1; i >= 0; --i) {

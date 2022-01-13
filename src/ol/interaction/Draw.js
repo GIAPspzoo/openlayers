@@ -362,14 +362,16 @@ class Draw extends PointerInteraction {
      * @type {(this: Window, ev: KeyboardEvent) => any}
      * @private
      */
-    this.handlePerpendicularKeyDownListener_ = null;
+    this.handlePerpendicularKeyDownListener_ =
+      this.handlePerpendicularKeyDown_.bind(this);
 
     /**
      * Bound up the perpendicular key up handler with the "this" object.
      * @type {(this: Window, ev: KeyboardEvent) => any}
      * @private
      */
-    this.handlePerpendicularKeyUpListener_ = null;
+    this.handlePerpendicularKeyUpListener_ =
+      this.handlePerpendicularKeyUp_.bind(this);
 
     /**
      * The last cursor coordinates hovered on the map.
@@ -629,15 +631,10 @@ class Draw extends PointerInteraction {
    * @private
    */
   addPerpendicularKeyListeners_() {
-    this.handlePerpendicularKeyDownListener_ =
-      this.handlePerpendicularKeyDown_.bind(this);
     window.addEventListener(
       'keydown',
       this.handlePerpendicularKeyDownListener_
     );
-
-    this.handlePerpendicularKeyUpListener_ =
-      this.handlePerpendicularKeyUp_.bind(this);
     window.addEventListener('keyup', this.handlePerpendicularKeyUpListener_);
   }
 
@@ -650,7 +647,6 @@ class Draw extends PointerInteraction {
       'keydown',
       this.handlePerpendicularKeyDownListener_
     );
-
     window.removeEventListener('keyup', this.handlePerpendicularKeyUpListener_);
   }
 

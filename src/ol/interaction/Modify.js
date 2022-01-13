@@ -352,14 +352,16 @@ class Modify extends PointerInteraction {
      * @type {(this: Window, ev: KeyboardEvent) => any}
      * @private
      */
-    this.handlePerpendicularKeyDownListener_ = null;
+    this.handlePerpendicularKeyDownListener_ =
+      this.handlePerpendicularKeyDown_.bind(this);
 
     /**
      * Bound up the perpendicular key up handler with the "this" object.
      * @type {(this: Window, ev: KeyboardEvent) => any}
      * @private
      */
-    this.handlePerpendicularKeyUpListener_ = null;
+    this.handlePerpendicularKeyUpListener_ =
+      this.handlePerpendicularKeyUp_.bind(this);
 
     /**
      * The starting coordinates of the currently dragged vertex.
@@ -524,15 +526,10 @@ class Modify extends PointerInteraction {
       return;
     }
 
-    this.handlePerpendicularKeyDownListener_ =
-      this.handlePerpendicularKeyDown_.bind(this);
     window.addEventListener(
       'keydown',
       this.handlePerpendicularKeyDownListener_
     );
-
-    this.handlePerpendicularKeyUpListener_ =
-      this.handlePerpendicularKeyUp_.bind(this);
     window.addEventListener('keyup', this.handlePerpendicularKeyUpListener_);
 
     this.hasPerpendicularKeyEventsAttached_ = true;
@@ -547,7 +544,6 @@ class Modify extends PointerInteraction {
       'keydown',
       this.handlePerpendicularKeyDownListener_
     );
-
     window.removeEventListener('keyup', this.handlePerpendicularKeyUpListener_);
 
     this.hasPerpendicularKeyEventsAttached_ = false;
@@ -657,6 +653,12 @@ class Modify extends PointerInteraction {
    * @api
    */
   setActive(active) {
+    if (active) {
+      this.addPerpendicularKeyListeners_();
+    } else {
+      this.removePerpendicularKeyListeners_();
+    }
+
     if (this.vertexFeature_ && !active) {
       this.overlay_.getSource().removeFeature(this.vertexFeature_);
       this.vertexFeature_ = null;

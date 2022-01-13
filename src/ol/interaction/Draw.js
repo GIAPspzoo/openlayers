@@ -19,6 +19,7 @@ import Polygon, {fromCircle, makeRegular} from '../geom/Polygon.js';
 import VectorLayer from '../layer/Vector.js';
 import VectorSource from '../source/Vector.js';
 import {FALSE, TRUE} from '../functions.js';
+import {PERPENDICULAR_KEY, replaceLastArrayEntry} from '../util.js';
 import {always, noModifierKeys, shiftKeyOnly} from '../events/condition.js';
 import {
   boundingExtent,
@@ -35,7 +36,6 @@ import {
   transformCoordForGeolib,
   transformCoordFromGeolib,
 } from '../perpendicularCalculations.js';
-import {PERPENDICULAR_KEY, replaceLastArrayEntry} from '../util.js';
 import {squaredDistance as squaredCoordinateDistance} from '../coordinate.js';
 
 /**
@@ -362,14 +362,16 @@ class Draw extends PointerInteraction {
      * @type {(this: Window, ev: KeyboardEvent) => any}
      * @private
      */
-    this.handlePerpendicularKeyDownListener_ = null;
+    this.handlePerpendicularKeyDownListener_ =
+      this.handlePerpendicularKeyDown_.bind(this);
 
     /**
      * Bound up the perpendicular key up handler with the "this" object.
      * @type {(this: Window, ev: KeyboardEvent) => any}
      * @private
      */
-    this.handlePerpendicularKeyUpListener_ = null;
+    this.handlePerpendicularKeyUpListener_ =
+      this.handlePerpendicularKeyUp_.bind(this);
 
     /**
      * The last cursor coordinates hovered on the map.
@@ -629,15 +631,10 @@ class Draw extends PointerInteraction {
    * @private
    */
   addPerpendicularKeyListeners_() {
-    this.handlePerpendicularKeyDownListener_ =
-      this.handlePerpendicularKeyDown_.bind(this);
     window.addEventListener(
       'keydown',
       this.handlePerpendicularKeyDownListener_
     );
-
-    this.handlePerpendicularKeyUpListener_ =
-      this.handlePerpendicularKeyUp_.bind(this);
     window.addEventListener('keyup', this.handlePerpendicularKeyUpListener_);
   }
 

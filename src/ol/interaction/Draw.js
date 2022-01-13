@@ -19,6 +19,7 @@ import Polygon, {fromCircle, makeRegular} from '../geom/Polygon.js';
 import VectorLayer from '../layer/Vector.js';
 import VectorSource from '../source/Vector.js';
 import {FALSE, TRUE} from '../functions.js';
+import {PERPENDICULAR_KEY, replaceLastArrayEntry} from '../util.js';
 import {always, noModifierKeys, shiftKeyOnly} from '../events/condition.js';
 import {
   boundingExtent,
@@ -29,6 +30,12 @@ import {
 } from '../extent.js';
 import {createEditingStyle} from '../style/Style.js';
 import {fromUserCoordinate, getUserProjection} from '../proj.js';
+import {
+  getPerpendicularCoordinates,
+  getPrependicularDestination,
+  transformCoordForGeolib,
+  transformCoordFromGeolib,
+} from '../perpendicularCalculations.js';
 import {squaredDistance as squaredCoordinateDistance} from '../coordinate.js';
 
 /**
@@ -204,12 +211,12 @@ class Draw extends PointerInteraction {
     super(pointerOptions);
 
     /***
-     * @type {DrawOnSignature<import("../Observable").OnReturn>}
+     * @type {DrawOnSignature<import("../events").EventsKey>}
      */
     this.on;
 
     /***
-     * @type {DrawOnSignature<import("../Observable").OnReturn>}
+     * @type {DrawOnSignature<import("../events").EventsKey>}
      */
     this.once;
 
@@ -334,6 +341,42 @@ class Draw extends PointerInteraction {
     this.finishCondition_ = options.finishCondition
       ? options.finishCondition
       : TRUE;
+
+    /**
+     * Determines whether the perpendicular key is pressed.
+     * @type {boolean}
+     * @private
+     */
+    this.isPerpendicularKeyPressed_ = false;
+
+    /**
+     * Stores the coordinates of the last clicked place on the map.
+     * The value is cleared 1.5s after set.
+     * @type {import("../coordinate.js").Coordinate|null}
+     * @private
+     */
+    this.lastClickedCoordinates_ = null;
+
+    /**
+     * Bound up the perpendicular key down handler with the "this" object.
+     * @type {(this: Window, ev: KeyboardEvent) => any}
+     * @private
+     */
+    this.handlePerpendicularKeyDownListener_ = null;
+
+    /**
+     * Bound up the perpendicular key up handler with the "this" object.
+     * @type {(this: Window, ev: KeyboardEvent) => any}
+     * @private
+     */
+    this.handlePerpendicularKeyUpListener_ = null;
+
+    /**
+     * The last cursor coordinates hovered on the map.
+     * @type {import("../coordinate").Coordinate|null}
+     * @private
+     */
+    this.pointerCoordinate_ = null;
 
     let geometryFunction = options.geometryFunction;
     if (!geometryFunction) {
@@ -509,6 +552,109 @@ class Draw extends PointerInteraction {
   }
 
   /**
+   * Refresh the sketch if the perpendicular key has been pressed.
+   * @private
+   */
+  refreshSketchOnPerpendicularKeyPress_() {
+    const featureGeometry = this.sketchFeature_.getGeometry();
+    const featureCoords = featureGeometry.getCoordinates();
+
+    let pointerCoordinate;
+
+    if (this.type_ === Mode.LINE_STRING) {
+      if (featureCoords.length === 2) {
+        pointerCoordinate = featureCoords[1];
+      }
+      if (featureCoords.length > 2) {
+        pointerCoordinate = this.sketchCoords_[this.sketchCoords_.length - 1];
+      }
+    }
+
+    if (this.type_ === Mode.POLYGON) {
+      const currentFeatureCoords = featureCoords[featureCoords.length - 1];
+      if (currentFeatureCoords.length === 3) {
+        pointerCoordinate = currentFeatureCoords[1];
+      }
+      if (currentFeatureCoords.length > 3) {
+        pointerCoordinate =
+          currentFeatureCoords[currentFeatureCoords.length - 2];
+      }
+    }
+
+    const perpendicularCoords =
+      this.drawPerpendicularSketch_(pointerCoordinate);
+
+    if (perpendicularCoords) {
+      const lastPerpendicularCoord = perpendicularCoords.slice();
+      this.createOrUpdateSketchPoint_(lastPerpendicularCoord);
+    }
+  }
+
+  /**
+   * Handle the perpendicular key down.
+   * @param {KeyboardEvent} event Keyboard event
+   * @return {void}
+   */
+  handlePerpendicularKeyDown_({key}) {
+    if (key !== PERPENDICULAR_KEY || this.isPerpendicularKeyPressed_) {
+      return;
+    }
+
+    this.isPerpendicularKeyPressed_ = true;
+
+    if (!this.sketchFeature_) {
+      return;
+    }
+
+    this.refreshSketchOnPerpendicularKeyPress_();
+  }
+
+  /**
+   * Handle the perpendicular key up.
+   * @param {KeyboardEvent} event Keyboard event
+   * @return {void}
+   */
+  handlePerpendicularKeyUp_({key}) {
+    if (key === PERPENDICULAR_KEY) {
+      this.isPerpendicularKeyPressed_ = false;
+
+      if (this.sketchFeature_) {
+        this.modifyDrawing_(this.pointerCoordinate_);
+      }
+    }
+  }
+
+  /**
+   * Add the perpendicular key listeners.
+   * @private
+   */
+  addPerpendicularKeyListeners_() {
+    this.handlePerpendicularKeyDownListener_ =
+      this.handlePerpendicularKeyDown_.bind(this);
+    window.addEventListener(
+      'keydown',
+      this.handlePerpendicularKeyDownListener_
+    );
+
+    this.handlePerpendicularKeyUpListener_ =
+      this.handlePerpendicularKeyUp_.bind(this);
+    window.addEventListener('keyup', this.handlePerpendicularKeyUpListener_);
+  }
+
+  /**
+   * Remove the perpendicular key listeners.
+   * @private
+   */
+  removePerpendicularKeyListeners_() {
+    window.removeEventListener(
+      'keydown',
+      this.handlePerpendicularKeyDownListener_
+    );
+
+    window.removeEventListener('keyup', this.handlePerpendicularKeyUpListener_);
+  }
+
+  /**
    * Remove the interaction from its current map and attach it to the new map.
    * Subclasses may set up event handlers to get notified about changes to
    * the map here.
@@ -660,7 +806,14 @@ class Draw extends PointerInteraction {
           !this.freehand_ &&
           (!startingToDraw || this.mode_ === Mode.POINT)
         ) {
-          if (this.atFinish_(event.pixel)) {
+          // When the user draws a polygon or line and click twice in the same
+          // place, finish drawing.
+          const finishPolygonDrawing =
+            this.lastClickedCoordinates_ &&
+            event.coordinate.toString() ===
+              this.lastClickedCoordinates_.toString();
+
+          if (this.atFinish_(event.pixel) || finishPolygonDrawing) {
             if (this.finishCondition_(event)) {
               this.finishDrawing();
             }
@@ -677,7 +830,156 @@ class Draw extends PointerInteraction {
     if (!pass && this.stopClick_) {
       event.preventDefault();
     }
+
+    this.lastClickedCoordinates_ = event.coordinate.slice();
+    // When the user clicks the same place after 1.5s, do not finish
+    // the geometry, but continue the sketch.
+    setTimeout(this.clearLastClickedCoordinates_.bind(this), 1500);
+
     return pass;
+  }
+
+  /**
+   * Clear the lastClickedCoordinates_ property value.
+   * @private
+   */
+  clearLastClickedCoordinates_() {
+    this.lastClickedCoordinates_ = null;
+  }
+
+  /**
+   * Draw a perpendicular sketch for a LineString geometry.
+   * @param {import("../coordinate").Coordinate} eventCoordinate Event's coordinate.
+   * @return {import("../coordinate").Coordinate} Calculated coordinates.
+   * @private
+   */
+  drawPerpendicularLineStringSketch_(eventCoordinate) {
+    let coordinate = eventCoordinate;
+
+    const featureGeometry = this.sketchFeature_.getGeometry();
+    const featureCoords = featureGeometry.getCoordinates();
+
+    if (featureCoords.length === 2) {
+      const perpendicularCoords = getPerpendicularCoordinates(
+        featureCoords[0],
+        eventCoordinate
+      );
+      featureGeometry.setCoordinates(perpendicularCoords);
+      coordinate = perpendicularCoords[1];
+    }
+
+    if (featureCoords.length > 2) {
+      const perependicularDestination = getPrependicularDestination({
+        lastPoint: transformCoordForGeolib(
+          featureCoords[featureCoords.length - 2]
+        ),
+        penultimatePoint: transformCoordForGeolib(
+          featureCoords[featureCoords.length - 3]
+        ),
+        currentPoint: transformCoordForGeolib(eventCoordinate),
+      });
+
+      const transformedPerependicularDestination = transformCoordFromGeolib(
+        perependicularDestination
+      );
+      const newFeatureCoords = replaceLastArrayEntry(
+        featureCoords,
+        transformedPerependicularDestination
+      );
+      featureGeometry.setCoordinates(newFeatureCoords);
+      coordinate = transformedPerependicularDestination;
+    }
+
+    return coordinate;
+  }
+
+  /**
+   * Draw a perpendicular sketch for a Polygon geometry.
+   * @param {import("../coordinate").Coordinate} pointerCoordinate Pointer coordinate.
+   * @return {import("../coordinate").Coordinate} Calculated coordinates.
+   * @private
+   */
+  drawPerpendicularPolygonSketch_(pointerCoordinate) {
+    let coordinate = pointerCoordinate;
+
+    const featureGeometry = this.sketchFeature_.getGeometry();
+    const featureCoords = featureGeometry.getCoordinates();
+
+    if (featureCoords[0].length === 3) {
+      const lineGeometry = this.sketchLine_.getGeometry();
+      const lineCoords = lineGeometry.getCoordinates();
+      const perpendicularCoords = getPerpendicularCoordinates(
+        lineCoords[0],
+        pointerCoordinate
+      );
+      lineGeometry.setCoordinates(perpendicularCoords);
+
+      coordinate = perpendicularCoords[1];
+    }
+
+    if (featureCoords[0].length > 3) {
+      const perependicularDestination = getPrependicularDestination({
+        lastPoint: transformCoordForGeolib(
+          featureCoords[0][featureCoords[0].length - 3]
+        ),
+        penultimatePoint: transformCoordForGeolib(
+          featureCoords[0][featureCoords[0].length - 4]
+        ),
+        currentPoint: transformCoordForGeolib(pointerCoordinate),
+      });
+
+      const transformedPerependicularDestination = transformCoordFromGeolib(
+        perependicularDestination
+      );
+      const newFeatureCoords = replaceLastArrayEntry(
+        featureCoords[0],
+        transformedPerependicularDestination
+      );
+
+      featureGeometry.setCoordinates([newFeatureCoords]);
+      this.modifyDrawing_(transformedPerependicularDestination);
+      coordinate = transformedPerependicularDestination;
+    }
+
+    return coordinate;
+  }
+
+  /**
+   * Draw a perpendicular sketch on the map.
+   * @param {import("../coordinate").Coordinate} pointerCoordinate Pointer coordinate
+   * @return {import("../coordinate").Coordinate} Computed coordinate
+   * @private
+   */
+  drawPerpendicularSketch_(pointerCoordinate) {
+    let coordinate = pointerCoordinate;
+
+    if (this.type_ === Mode.LINE_STRING) {
+      coordinate = this.drawPerpendicularLineStringSketch_(pointerCoordinate);
+    }
+
+    if (this.type_ === Mode.POLYGON) {
+      coordinate = this.drawPerpendicularPolygonSketch_(pointerCoordinate);
+    }
+
+    return coordinate;
+  }
+
+  /**
+   * In the perpendicular line drawing mode we have to set the last anchored
+   * coordinate of the sketch as the value of the "this.finishCoordinate_"
+   * property (the penultimate one in geometry). Otherwise, the perpendicular
+   * line drawing will end when user click on the place where the cursor was
+   * when adding the last part of geometry.
+   * @private
+   */
+  setFinishCoordinateForLineSketch_() {
+    if (this.isPerpendicularKeyPressed_) {
+      const lastCoordinate = /** @type {import("../coordinate").Coordinate} */ (
+        this.sketchCoords_[this.sketchCoords_.length - 2]
+      );
+
+      this.finishCoordinate_ = lastCoordinate.slice();
+    }
   }
 
   /**
@@ -686,6 +988,8 @@ class Draw extends PointerInteraction {
    * @private
    */
   handlePointerMove_(event) {
+    this.pointerCoordinate_ = event.coordinate.slice();
+
     this.pointerType_ = event.originalEvent.pointerType;
     if (
       this.downPx_ &&
@@ -706,7 +1010,17 @@ class Draw extends PointerInteraction {
     }
 
     if (this.finishCoordinate_) {
-      this.modifyDrawing_(event.coordinate);
+      let coordinate = event.coordinate;
+
+      if (this.mode_ === Mode.LINE_STRING) {
+        this.setFinishCoordinateForLineSketch_();
+      }
+
+      if (this.isPerpendicularKeyPressed_) {
+        coordinate = this.drawPerpendicularSketch_(coordinate);
+      }
+
+      this.modifyDrawing_(coordinate);
     } else {
       this.createOrUpdateSketchPoint_(event.coordinate.slice());
     }
@@ -917,6 +1231,13 @@ class Draw extends PointerInteraction {
     }
     this.createOrUpdateSketchPoint_(coordinate.slice());
     this.updateSketchFeatures_();
+
+    // Refresh the sketch if drawing a perpendicular geometry.
+    if (this.isPerpendicularKeyPressed_) {
+      const perpendicularCoordinate = this.drawPerpendicularSketch_(coordinate);
+      this.modifyDrawing_(perpendicularCoordinate);
+    }
+
     if (done) {
       this.finishDrawing();
     }
@@ -1147,6 +1468,9 @@ class Draw extends PointerInteraction {
     const active = this.getActive();
     if (!map || !active) {
       this.abortDrawing();
+      this.removePerpendicularKeyListeners_();
+    } else {
+      this.addPerpendicularKeyListeners_();
     }
     this.overlay_.setMap(active ? map : null);
   }
@@ -1247,7 +1571,7 @@ export function createBox() {
 }
 
 /**
- * Get the drawing mode.  The mode for mult-part geometries is the same as for
+ * Get the drawing mode.  The mode for multi-part geometries is the same as for
  * their single-part cousins.
  * @param {import("../geom/GeometryType.js").default} type Geometry type.
  * @return {Mode} Drawing mode.

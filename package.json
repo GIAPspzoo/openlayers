@@ -1,6 +1,6 @@
 {
-  "name": "ol",
-  "version": "6.6.1",
+  "name": "@giapspzoo/ol",
+  "version": "6.6.1-a",
   "description": "OpenLayers mapping library",
   "keywords": [
     "map",
@@ -34,17 +34,18 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git://github.com/openlayers/openlayers.git"
+    "url": "git://github.com/GIAPspzoo/openlayers.git"
   },
   "license": "BSD-2-Clause",
   "bugs": {
-    "url": "https://github.com/openlayers/openlayers/issues"
+    "url": "https://github.com/GIAPspzoo/openlayers/issues"
   },
   "funding": {
     "type": "opencollective",
     "url": "https://opencollective.com/openlayers"
   },
   "dependencies": {
+    "geographiclib": "^1.52.0",
     "ol-mapbox-style": "^6.4.1",
     "pbf": "3.2.1",
     "rbush": "^3.0.1"

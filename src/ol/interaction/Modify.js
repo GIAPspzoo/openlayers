@@ -7,6 +7,7 @@ import Event from '../events/Event.js';
 import EventType from '../events/EventType.js';
 import Feature from '../Feature.js';
 import GeometryType from '../geom/GeometryType.js';
+import MapBrowserEvent from '../MapBrowserEvent.js';
 import MapBrowserEventType from '../MapBrowserEventType.js';
 import Point from '../geom/Point.js';
 import PointerInteraction from './Pointer.js';
@@ -14,6 +15,7 @@ import RBush from '../structs/RBush.js';
 import VectorEventType from '../source/VectorEventType.js';
 import VectorLayer from '../layer/Vector.js';
 import VectorSource from '../source/Vector.js';
+import {PERPENDICULAR_KEY, getUid} from '../util.js';
 import {
   altKeyOnly,
   always,
@@ -42,7 +44,11 @@ import {
   toUserCoordinate,
   toUserExtent,
 } from '../proj.js';
-import {getUid} from '../util.js';
+import {
+  getPrependicularDestination,
+  transformCoordForGeolib,
+  transformCoordFromGeolib,
+} from '../perpendicularCalculations.js';
 
 /**
  * The segment index assigned to a circle's center when
@@ -110,7 +116,7 @@ const ModifyEventType = {
  * @property {import("../style/Style.js").StyleLike} [style]
  * Style used for the modification point or vertex. For linestrings and polygons, this will
  * be the affected vertex, for circles a point along the circle, and for points the actual
- * point. If not configured, the default edit style is used (see {@link module:ol/style}).
+ * point. If not configured, the default edit style is used (see {@link module:ol/style/Style~Style}).
  * When using a style function, the point feature passed to the function will have a `features`
  * property - an array whose entries are the features that are being modified, and a `geometries`
  * property - an array whose entries are the geometries that are being modified. Both arrays are
@@ -203,12 +209,12 @@ class Modify extends PointerInteraction {
     super(/** @type {import("./Pointer.js").Options} */ (options));
 
     /***
-     * @type {ModifyOnSignature<import("../Observable.js").OnReturn>}
+     * @type {ModifyOnSignature<import("../events").EventsKey>}
      */
     this.on;
 
     /***
-     * @type {ModifyOnSignature<import("../Observable.js").OnReturn>}
+     * @type {ModifyOnSignature<import("../events").EventsKey>}
      */
     this.once;
 
@@ -335,6 +341,48 @@ class Modify extends PointerInteraction {
     });
 
     /**
+     * Determines whether the perpendicular key is pressed.
+     * @type {boolean}
+     * @private
+     */
+    this.isPerpendicularKeyPressed_ = false;
+
+    /**
+     * Bound up the perpendicular key down handler with the "this" object.
+     * @type {(this: Window, ev: KeyboardEvent) => any}
+     * @private
+     */
+    this.handlePerpendicularKeyDownListener_ = null;
+
+    /**
+     * Bound up the perpendicular key up handler with the "this" object.
+     * @type {(this: Window, ev: KeyboardEvent) => any}
+     * @private
+     */
+    this.handlePerpendicularKeyUpListener_ = null;
+
+    /**
+     * The starting coordinates of the currently dragged vertex.
+     * @type {number|null}
+     * @private
+     */
+    this.draggedCoordinateIndex_ = null;
+
+    /**
+     * The current coordinates of the pointer
+     * @type {import('../coordinate').Coordinate}
+     * @private
+     */
+    this.pointerCoordinate_ = null;
+
+    /**
+     * Determines if the perpendicular key events are attached to the DOM.
+     * @type {boolean}
+     * @private
+     */
+    this.hasPerpendicularKeyEventsAttached_ = false;
+
+    /**
      * @const
      * @private
      * @type {!Object<string, function(Feature, import("../geom/Geometry.js").default): void>}
@@ -421,6 +469,88 @@ class Modify extends PointerInteraction {
       options.snapToPointer === undefined
         ? !this.hitDetection_
         : options.snapToPointer;
+
+    this.addPerpendicularKeyListeners_();
+  }
+
+  /**
+   * Refreshes perpendicular modification geometry.
+   * @param {KeyboardEvent} event Event to pass down
+   * @private
+   */
+  refreshPerpendicularModification_(event) {
+    if (this.pointerCoordinate_) {
+      const perpendicularKeyDownEvent = new MapBrowserEvent(
+        EventType.KEYPRESS,
+        this.getMap(),
+        event
+      );
+      perpendicularKeyDownEvent.coordinate = this.pointerCoordinate_;
+
+      this.handleDragEvent(perpendicularKeyDownEvent);
+    }
+  }
+
+  /**
+   * Handle the perpendicular key down.
+   * @param {KeyboardEvent} event Keyboard event
+   * @return {void}
+   */
+  handlePerpendicularKeyDown_(event) {
+    if (event.key === PERPENDICULAR_KEY) {
+      this.isPerpendicularKeyPressed_ = true;
+      this.refreshPerpendicularModification_(event);
+    }
+  }
+
+  /**
+   * Handle the perpendicular key up.
+   * @param {KeyboardEvent} event Keyboard event
+   * @return {void}
+   */
+  handlePerpendicularKeyUp_(event) {
+    if (event.key === PERPENDICULAR_KEY) {
+      this.isPerpendicularKeyPressed_ = false;
+      this.refreshPerpendicularModification_(event);
+    }
+  }
+
+  /**
+   * Add the perpendicular key listeners.
+   * @private
+   */
+  addPerpendicularKeyListeners_() {
+    if (this.hasPerpendicularKeyEventsAttached_) {
+      return;
+    }
+
+    this.handlePerpendicularKeyDownListener_ =
+      this.handlePerpendicularKeyDown_.bind(this);
+    window.addEventListener(
+      'keydown',
+      this.handlePerpendicularKeyDownListener_
+    );
+
+    this.handlePerpendicularKeyUpListener_ =
+      this.handlePerpendicularKeyUp_.bind(this);
+    window.addEventListener('keyup', this.handlePerpendicularKeyUpListener_);
+
+    this.hasPerpendicularKeyEventsAttached_ = true;
+  }
+
+  /**
+   * Remove the perpendicular key listeners.
+   * @private
+   */
+  removePerpendicularKeyListeners_() {
+    window.removeEventListener(
+      'keydown',
+      this.handlePerpendicularKeyDownListener_
+    );
+
+    window.removeEventListener('keyup', this.handlePerpendicularKeyUpListener_);
+
+    this.hasPerpendicularKeyEventsAttached_ = false;
   }
 
   /**
@@ -580,6 +710,7 @@ class Modify extends PointerInteraction {
    */
   handleFeatureAdd_(evt) {
     this.addFeature_(/** @type {Feature} */ (evt.element));
+    this.addPerpendicularKeyListeners_();
   }
 
   /**
@@ -601,6 +732,7 @@ class Modify extends PointerInteraction {
   handleFeatureRemove_(evt) {
     const feature = /** @type {Feature} */ (evt.element);
     this.removeFeature_(feature);
+    this.removePerpendicularKeyListeners_();
   }
 
   /**
@@ -830,6 +962,7 @@ class Modify extends PointerInteraction {
     }
     vertexFeature.set('features', features);
     vertexFeature.set('geometries', geometries);
+    vertexFeature.set('coordinates', coordinates);
     return vertexFeature;
   }
 
@@ -871,17 +1004,87 @@ class Modify extends PointerInteraction {
   }
 
   /**
+   * Calculate perpendicular modification.
+   * @param {import("../coordinate.js").Coordinate} eventCoordinate Event coordinate.
+   * @return {import("../coordinate.js").Coordinate|void} Perpendicular vertex's coordinate.
+   * @private
+   */
+  handlePerpendicularModification_(eventCoordinate) {
+    if (!(this.dragSegments_ && this.dragSegments_.length)) {
+      return;
+    }
+
+    const featureGeometry = this.dragSegments_[0][0].geometry;
+    const featureGeometryType = featureGeometry.getType();
+    const draggedCoordinateIndex = this.draggedCoordinateIndex_;
+
+    let penultimatePoint;
+    let lastPoint;
+
+    if (featureGeometryType === GeometryType.POLYGON) {
+      const featureCoords = featureGeometry.getCoordinates()[0];
+
+      if (draggedCoordinateIndex > 1) {
+        penultimatePoint = featureCoords[draggedCoordinateIndex - 2];
+        lastPoint = featureCoords[draggedCoordinateIndex - 1];
+      } else if (draggedCoordinateIndex === 1) {
+        penultimatePoint = featureCoords[featureCoords.length - 2];
+        lastPoint = featureCoords[0];
+      } else if (draggedCoordinateIndex === 0) {
+        penultimatePoint = featureCoords[featureCoords.length - 3];
+        lastPoint = featureCoords[featureCoords.length - 2];
+      }
+    }
+
+    if (featureGeometryType === GeometryType.LINE_STRING) {
+      const featureCoords = featureGeometry.getCoordinates();
+
+      if (draggedCoordinateIndex > 1) {
+        penultimatePoint = featureCoords[draggedCoordinateIndex - 2];
+        lastPoint = featureCoords[draggedCoordinateIndex - 1];
+      } else if (draggedCoordinateIndex === 1) {
+        penultimatePoint = featureCoords[featureCoords.length - 2];
+        lastPoint = featureCoords[0];
+      }
+    }
+
+    if (penultimatePoint && lastPoint) {
+      const perpendicularCoordinate = getPrependicularDestination({
+        penultimatePoint: transformCoordForGeolib(penultimatePoint),
+        lastPoint: transformCoordForGeolib(lastPoint),
+        currentPoint: transformCoordForGeolib(eventCoordinate),
+      });
+
+      if (perpendicularCoordinate) {
+        return transformCoordFromGeolib(perpendicularCoordinate);
+      }
+    }
+  }
+
+  /**
    * Handle pointer drag events.
    * @param {import("../MapBrowserEvent.js").default} evt Event.
    */
   handleDragEvent(evt) {
+    this.pointerCoordinate_ = evt.coordinate.slice();
+
     this.ignoreNextSingleClick_ = false;
     this.willModifyFeatures_(evt, this.dragSegments_);
 
-    const vertex = [
+    let vertex = [
       evt.coordinate[0] + this.delta_[0],
       evt.coordinate[1] + this.delta_[1],
     ];
+
+    if (this.isPerpendicularKeyPressed_) {
+      const perpendicularVertexCoordinate =
+        this.handlePerpendicularModification_(evt.coordinate);
+
+      if (perpendicularVertexCoordinate) {
+        vertex = perpendicularVertexCoordinate;
+      }
+    }
+
     const features = [];
     const geometries = [];
     for (let i = 0, ii = this.dragSegments_.length; i < ii; ++i) {
@@ -977,6 +1180,41 @@ class Modify extends PointerInteraction {
   }
 
   /**
+   * Set the dragged coordinate feature geometry index.
+   * @private
+   */
+  setDraggedCoordinateIndex_() {
+    if (!this.dragSegments_.length) {
+      return;
+    }
+
+    const featureGeometry = this.dragSegments_[0][0].geometry;
+    const featureGeometryType = featureGeometry.getType();
+
+    if (
+      featureGeometryType === GeometryType.LINE_STRING ||
+      featureGeometryType === GeometryType.POLYGON
+    ) {
+      let featureCoordinates =
+        this.dragSegments_[0][0].geometry.getCoordinates();
+      if (featureGeometryType === GeometryType.POLYGON) {
+        featureCoordinates = featureCoordinates[0];
+      }
+
+      const draggedCoordinateIndex =
+        featureCoordinates &&
+        featureCoordinates.findIndex(
+          (coordinate) =>
+            this.vertexFeature_ &&
+            coordinate.toString() ===
+              this.vertexFeature_.get('coordinates').toString()
+        );
+
+      this.draggedCoordinateIndex_ = draggedCoordinateIndex;
+    }
+  }
+
+  /**
    * Handle pointer down events.
    * @param {import("../MapBrowserEvent.js").default} evt Event.
    * @return {boolean} If the event was consumed.
@@ -985,6 +1223,9 @@ class Modify extends PointerInteraction {
     if (!this.condition_(evt)) {
       return false;
     }
+
+    this.pointerCoordinate_ = evt.coordinate.slice();
+
     const pixelCoordinate = evt.coordinate;
     this.handlePointerAtPixel_(evt.pixel, evt.map, pixelCoordinate);
     this.dragSegments_.length = 0;
@@ -1076,6 +1317,9 @@ class Modify extends PointerInteraction {
         this.insertVertex_(insertVertices[j], vertex);
       }
     }
+
+    this.setDraggedCoordinateIndex_();
+
     return !!this.vertexFeature_;
   }
 
@@ -1085,6 +1329,9 @@ class Modify extends PointerInteraction {
    * @return {boolean} If the event was consumed.
    */
   handleUpEvent(evt) {
+    this.pointerCoordinate_ = null;
+    this.draggedCoordinateIndex_ = null;
+
     for (let i = this.dragSegments_.length - 1; i >= 0; --i) {
       const segmentData = this.dragSegments_[i][0];
       const geometry = segmentData.geometry;
@@ -1167,7 +1414,11 @@ class Modify extends PointerInteraction {
       map.forEachFeatureAtPixel(
         pixel,
         (feature, layer, geometry) => {
-          geometry = geometry || feature.getGeometry();
+          geometry =
+            geometry ||
+            /** @type {import("../geom/SimpleGeometry").default} */ (
+              feature.getGeometry()
+            );
           if (
             geometry.getType() === GeometryType.POINT &&
             includes(this.features_.getArray(), feature)

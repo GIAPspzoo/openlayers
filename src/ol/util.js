@@ -5,7 +5,7 @@
 /**
  * @return {?} Any return.
  */
-export function abstract() {
+ export function abstract() {
   return /** @type {?} */ (
     (function () {
       throw new Error('Unimplemented abstract method.');
@@ -38,3 +38,21 @@ export function getUid(obj) {
  * @type {string}
  */
 export const VERSION = 'latest';
+
+/**
+ * Replace the last element of the array with the specified one.
+ * @param {Array} array Array to replace.
+ * @param {any} itemToReplace Item to replace.
+ * @return {Array} Array with the replaced item.
+ */
+export function replaceLastArrayEntry(array, itemToReplace) {
+  const replacedArray = array.slice();
+  replacedArray.pop();
+  replacedArray.push(itemToReplace);
+  return replacedArray;
+}
+
+/**
+ * The key that activates the mode of drawing/modifying perpendicular geometry. 
+ */
+export const PERPENDICULAR_KEY = 'z';
